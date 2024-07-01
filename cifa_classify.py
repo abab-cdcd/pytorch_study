@@ -10,6 +10,7 @@ Cifar_train = torchvision.datasets.CIFAR10(root='./dataset', train=True, downloa
 data_loader = DataLoader(Cifar_train, batch_size=64, shuffle=True, num_workers=0, drop_last=False)
 
 writer = SummaryWriter('log')
+writer2 = SummaryWriter('log_seq')
 
 
 class cnn_model(nn.Module):
@@ -31,14 +32,19 @@ class cnn_model(nn.Module):
 
 
 model = cnn_model()
+print(model)
 loss = nn.CrossEntropyLoss()
 step = 1
 epochs = 10
 optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+ins = 1
 for epoch in range(epochs):
     sum_loss = 0.0
     for data in data_loader:
         img, label = data
+        if ins == 1:
+            writer2.add_graph(model, img)
+            ins -=1
         output = model(img)
         result_loss = loss(output, label)
         sum_loss += result_loss
