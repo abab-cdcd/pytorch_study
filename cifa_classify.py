@@ -1,61 +1,94 @@
 import torch
-import torchvision
-from torch.nn import Flatten, Linear
-from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from torch import nn
+from torchvision import transforms
+import time
+from Model import cdcd
+from data_loader import Dataloader
+from torch.utils.tensorboard import SummaryWriter
 
-Cifar_train = torchvision.datasets.CIFAR10(root='./dataset', train=True, download=True,
-                                           transform=torchvision.transforms.ToTensor())
-data_loader = DataLoader(Cifar_train, batch_size=64, shuffle=True, num_workers=0, drop_last=False)
-
-writer = SummaryWriter('log')
-writer2 = SummaryWriter('log_seq')
-
-
-class cnn_model(nn.Module):
-    def __init__(self):
-        super(cnn_model, self).__init__()
-        self.block1 = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1, stride=1),  # 3x32x32 -> 32x32x32
-            nn.MaxPool2d(2),  # 33x16x16
-            nn.Conv2d(32, 64, 3, padding=1, stride=1),  # 64x16x16
-            nn.MaxPool2d(2),  # 64x8x8
-            Flatten(),  # 4096
-            Linear(64 * 8 * 8, 64),  # 64
-            Linear(64, 10)  # 10
-        )
-
-    def forward(self, x):
-        x = self.block1(x)
-        return x
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-model = cnn_model()
-print(model)
-loss = nn.CrossEntropyLoss()
-step = 1
-epochs = 10
-optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
-ins = 1
-for epoch in range(epochs):
-    sum_loss = 0.0
-    for data in data_loader:
-        img, label = data
-        if ins == 1:
-            writer2.add_graph(model, img)
-            ins -=1
-        output = model(img)
-        result_loss = loss(output, label)
-        sum_loss += result_loss
+def train(model, train_loader, criterion, optimizer):
+    model.train()
+    start_time = time.time()
+    loss_sum = 0.0
+    avg_accuracy = 0.0
+    for ind, (images, labels) in enumerate(train_loader):
+        images = images.to(device)
+        labels = labels.long().to(device)
+        output = model(images)
+        # print(output)
+        # print(labels)
+        loss = criterion(output, labels)
+        loss_sum += loss.item()
         optimizer.zero_grad()
-        result_loss.backward()
+        loss.backward()
         optimizer.step()
-        # print(output.shape)
-        if step % 100 == 0:
-            print(step)
-        step += 1
-    writer.add_scalar('loss', sum_loss, epoch)
-    print(sum_loss)
-    print(epoch)
-writer.close()
+        correct = (output.argmax(dim=1) == labels).sum().item()
+        accuracy = correct / len(labels)
+        avg_accuracy += accuracy
+        if ind % 100 == 0:
+            print('-----------第{}次训练-----------'.format(ind))
+            print('  Loss: {:.4f}    accuracy: {:.2f}'.format(loss.item(), accuracy))
+            print('  Avg accuracy: {:.2f}'.format(avg_accuracy/(ind+1)))
+    end_time = time.time()
+    print('Train time: {} seconds'.format(end_time - start_time))
+    return loss_sum, avg_accuracy / len(train_loader)
+
+
+def test(model,test_loader,criterion):
+    model.eval()
+    start_time = time.time()
+    loss_sum = 0.0
+    avg_accuracy = 0.0
+    with torch.no_grad():
+        for ind, (images, labels) in enumerate(test_loader):
+            images = images.to(device)
+            labels = labels.long().to(device)
+            output = model(images)
+            loss = criterion(output, labels)
+            loss_sum += loss.item()
+            correct = (output.argmax(dim=1) == labels).sum().item()
+            accuracy = correct / len(labels)
+            avg_accuracy += accuracy
+            if ind % 100 == 0:
+                print('---------------第{}次测试-----------'.format(ind))
+                print('  Loss: {:.4f}  accuracy: {:.2f}'.format(loss.item(), accuracy))
+                print('  Test Accuracy: {:.2f}'.format(avg_accuracy/(ind+1)))
+    end_time = time.time()
+    print('Test time: {} seconds'.format(end_time - start_time))
+    return loss_sum, avg_accuracy / len(test_loader)
+
+
+if __name__ == "__main__":
+    model = cdcd().to(device)
+    writer = SummaryWriter(log_dir='./logs')
+    criterion = nn.CrossEntropyLoss().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    dataloader = Dataloader(data_dir='./dataset/MSTAR', batch_size=8, num_workers=2, transform=transform, split=0.8)
+    train_loader, test_loader = dataloader.get_loader()
+    for epoch in range(10):
+        print(f'Epoch:  {epoch} / 10')
+        print('-----------开始训练------------')
+        train_running_loss, train_avg_accuracy= train(model=model, train_loader=train_loader, criterion=criterion, optimizer=optimizer)
+        torch.save(model.state_dict(), f'./model/cdcd_model_{epoch}.pth')
+        print(f'Epoch: {epoch} Train Loss: {train_running_loss} Running Average Accuracy: {train_avg_accuracy}')
+        writer.add_scalar('Train_Loss', train_running_loss, epoch)
+        writer.add_scalar('Train_Accuracy', train_avg_accuracy, epoch)
+        print(f'模型cdcd_model_{epoch}.pth 已保存')
+        print('-----------开始测试------------')
+        test_running_loss, test_avg_accuracy = test(model=model, test_loader=test_loader,criterion=criterion)
+        print(f'Epoch: {epoch} Test Loss: {test_running_loss} Running Average Accuracy: {test_avg_accuracy}')
+        writer.add_scalar('Test_Loss', test_running_loss, epoch)
+        writer.add_scalar('Test_Accuracy', test_avg_accuracy, epoch)
+    print('\n\n-----------------------训练结束---------------------------')
+    writer.close()
+
+
+
+
